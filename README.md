@@ -1,4 +1,4 @@
-# kenrel-hack-sandbox
+# kernel-hack-sandbox
 
 Sandbox manager for linux kernel. Build the Linux kernel and Busybox from source.
 
