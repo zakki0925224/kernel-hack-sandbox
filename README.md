@@ -18,3 +18,7 @@ python3 ./main.py create-sandbox --kernel-version <VERSION> --sandbox-name <NAME
 python3 ./main.py run-sandbox --name <NAME>
 ... and so on
 ```
+
+### Mount directory
+
+The directory to be mounted on `/mnt` if it exists is `sandbox/<SANDBOX NAME>/mnt`.
