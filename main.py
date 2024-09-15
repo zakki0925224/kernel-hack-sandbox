@@ -69,6 +69,8 @@ def cmd():
 def create_sandbox(kernel_version: str, sandbox_name: str):
     linux_dir = linux_version_dir(kernel_version)
     sandbox_dir = f"{SANDBOX_DIR}/{sandbox_name}"
+    rootfs_path = f"{sandbox_dir}/{ROOTFS_NAME}"
+    bzimage_path = f"{sandbox_dir}/{BZIMAGE_NAME}"
 
     if not download_busybox():
         return
@@ -76,14 +78,18 @@ def create_sandbox(kernel_version: str, sandbox_name: str):
     if not download_linux(kernel_version):
         return
 
-    if os.path.exists(sandbox_dir):
+    if (
+        os.path.exists(sandbox_dir)
+        and os.path.exists(rootfs_path)
+        and os.path.exists(bzimage_path)
+    ):
         click.echo("Sandbox already exists", err=True)
         return
 
     run_shell_cmd(f"mkdir -p {sandbox_dir}")
 
     # build busybox
-    if not os.path.exists(f"{sandbox_dir}/{ROOTFS_NAME}"):
+    if not os.path.exists(rootfs_path):
         run_shell_cmd("make menuconfig", dir=BUSYBOX_DIR)
         run_shell_cmd("make install", dir=BUSYBOX_DIR)
         run_shell_cmd(
@@ -93,7 +99,7 @@ def create_sandbox(kernel_version: str, sandbox_name: str):
         run_shell_cmd(f"cp {BUSYBOX_DIR}/rootfs.img {sandbox_dir}")
 
     # buid linux (x86_64 only)
-    if not os.path.exists(f"{sandbox_dir}/{BZIMAGE_NAME}"):
+    if not os.path.exists(bzimage_path):
         run_shell_cmd("cp ./arch/x86/configs/x86_64_defconfig ./.config", dir=linux_dir)
         run_shell_cmd("make menuconfig", dir=linux_dir)
         run_shell_cmd("make -j$(nproc)", dir=linux_dir)
