@@ -1,0 +1,10 @@
+name = "sample"
+kernel_version = "v6.10"
+
+kernel_buildconfig = [
+    "CONFIG_DEBUG_KERNEL=y",
+    "CONFIG_DEBUG_INFO=y",
+    "CONFIG_RELOCATABLE=n",
+]
+
+# force_rebuild = true

@@ -1,6 +1,7 @@
 import click
 import subprocess
 import os
+import toml
 
 REPOS_DIR = "./repos"
 BUSYBOX_DIR = f"{REPOS_DIR}/busybox"
@@ -9,8 +10,17 @@ LINUX_DIR = f"{REPOS_DIR}/linux"
 SANDBOX_DIR = "./sandbox"
 BZIMAGE_NAME = "bzImage"
 ROOTFS_NAME = "rootfs.img"
-ROOTFS_BACKUP_NAME = "rootfs_backup.img"
+SANDBOX_SPEC_NAME = "spec.toml"
 MNT_DIR_NAME = "mnt"
+
+QEMU_ARGS = [
+    f"-kernel ./{BZIMAGE_NAME}",
+    f"-initrd ./{ROOTFS_NAME}",
+    "-append 'rdinit=/bin/sh console=ttyS0'",
+    "-serial mon:stdio",
+    "-monitor telnet::5678,server,nowait",
+    "-gdb tcp::3333",
+]
 
 BUSYBOX_GIT = "https://git.busybox.net/busybox.git"
 LINUX_GIT = "https://github.com/torvalds/linux.git"
@@ -64,78 +74,109 @@ def cmd():
 
 
 @cmd.command()
+@click.option("--name", required=True, type=str)
 @click.option("--kernel-version", required=True, type=str)
-@click.option("--sandbox-name", required=True, type=str)
-def create_sandbox(kernel_version: str, sandbox_name: str):
-    linux_dir = linux_version_dir(kernel_version)
-    sandbox_dir = f"{SANDBOX_DIR}/{sandbox_name}"
-    rootfs_path = f"{sandbox_dir}/{ROOTFS_NAME}"
-    bzimage_path = f"{sandbox_dir}/{BZIMAGE_NAME}"
+def create(
+    name: str,
+    kernel_version: str,
+):
+    sandbox_dir = f"{SANDBOX_DIR}/{name}"
+    spec_path = f"{sandbox_dir}/{SANDBOX_SPEC_NAME}"
 
-    if not download_busybox():
+    if os.path.exists(spec_path):
+        click.echo("Sandbox already exists", err=True)
+
+    else:
+        run_shell_cmd(f"mkdir -p {sandbox_dir}")
+        # generate sandbox spec
+        spec = f'name = "{name}"\nkernel_version = "{kernel_version}"\n'
+        with open(spec_path, "w") as f:
+            f.write(spec)
+        click.echo(f"Sandbox spec created at {spec_path}")
+
+
+@cmd.command()
+@click.option("--name", required=True, type=str)
+def run(name):
+    sandbox_dir = f"{SANDBOX_DIR}/{name}"
+    spec_path = f"{sandbox_dir}/{SANDBOX_SPEC_NAME}"
+
+    if not os.path.exists(spec_path):
+        click.echo("Sandbox spec is not exists", err=True)
+        return
+
+    # parse spec
+    spec = toml.load(spec_path)
+    kernel_version = spec.get("kernel_version")
+    kernel_buildconfig = spec.get("kernel_buildconfig")
+    force_rebuild = spec.get("force_rebuild", False)
+
+    if not kernel_version:
+        click.echo("Kernel version is not specified in the spec", err=True)
         return
 
     if not download_linux(kernel_version):
+        click.echo("Failed to download linux", err=True)
         return
 
-    if (
-        os.path.exists(sandbox_dir)
-        and os.path.exists(rootfs_path)
-        and os.path.exists(bzimage_path)
-    ):
-        click.echo("Sandbox already exists", err=True)
+    if not download_busybox():
+        click.echo("Failed to download busybox", err=True)
         return
 
-    run_shell_cmd(f"mkdir -p {sandbox_dir}")
+    linux_dir = linux_version_dir(kernel_version)
+    rootfs_path = f"{sandbox_dir}/{ROOTFS_NAME}"
+    bzimage_path = f"{sandbox_dir}/{BZIMAGE_NAME}"
+    mnt_path = f"{sandbox_dir}/{MNT_DIR_NAME}"
 
-    # build busybox
-    if not os.path.exists(rootfs_path):
+    if (not os.path.exists(rootfs_path)) or force_rebuild:
+        copied_mnt = False
+
+        # build busybox
         run_shell_cmd("make menuconfig", dir=BUSYBOX_DIR)
         run_shell_cmd("make install", dir=BUSYBOX_DIR)
+
+        # include mnt dir
+        if os.path.exists(mnt_path):
+            run_shell_cmd(f"cp -r {mnt_path} {BUSYBOX_DIR}/_install")
+            copied_mnt = True
+
         run_shell_cmd(
-            "find . | cpio -o --format=newc > ../rootfs.img",
+            f"find . | cpio -o --format=newc | gzip > ../{ROOTFS_NAME}",
             dir=f"{BUSYBOX_DIR}/_install",
         )
-        run_shell_cmd(f"cp {BUSYBOX_DIR}/rootfs.img {sandbox_dir}")
+        run_shell_cmd(f"cp {BUSYBOX_DIR}/{ROOTFS_NAME} {sandbox_dir}")
 
-    # buid linux (x86_64 only)
-    if not os.path.exists(bzimage_path):
+        if copied_mnt:
+            # remove mnt dir from busybox/_install
+            run_shell_cmd(f"rm -rf {BUSYBOX_DIR}/_install/{MNT_DIR_NAME}")
+
+    # build linux (x86_64 only)
+    if (not os.path.exists(bzimage_path)) or force_rebuild:
+        run_shell_cmd("make clean", dir=linux_dir)
         run_shell_cmd("cp ./arch/x86/configs/x86_64_defconfig ./.config", dir=linux_dir)
-        run_shell_cmd("make menuconfig", dir=linux_dir)
+
+        # apply kernel buildconfig
+        if kernel_buildconfig:
+            with open(f"{linux_dir}/.config", "a") as f:
+                for config in kernel_buildconfig:
+                    f.write(f"{config}\n")
+            run_shell_cmd("make olddefconfig", dir=linux_dir)
+            run_shell_cmd("make localmodconfig", dir=linux_dir)
+        else:
+            run_shell_cmd("make menuconfig", dir=linux_dir)
+
         run_shell_cmd("make -j$(nproc)", dir=linux_dir)
         run_shell_cmd(f"cp {linux_dir}/arch/x86_64/boot/bzImage {sandbox_dir}")
 
-
-@cmd.command()
-@click.option("--name", required=True, type=str)
-def run_sandbox(name):
-    sandbox_dir = f"{SANDBOX_DIR}/{name}"
-
-    if not os.path.exists(sandbox_dir):
-        click.echo("Sandbox is not exists", err=True)
-        return
-
-    # include ./mnt into rootfs.img
-    if os.path.exists(f"{sandbox_dir}/{MNT_DIR_NAME}"):
-        run_shell_cmd(f"cp ./{ROOTFS_NAME} ./{ROOTFS_BACKUP_NAME}", dir=sandbox_dir)
-        run_shell_cmd(
-            f"find ./{MNT_DIR_NAME} | cpio -o -H newc -A -F ./{ROOTFS_NAME}",
-            dir=sandbox_dir,
-        )
-
     run_shell_cmd(
-        f'qemu-system-x86_64 -kernel ./{BZIMAGE_NAME} -initrd ./{ROOTFS_NAME} -append "rdinit=/bin/sh" -serial mon:stdio',
+        f"qemu-system-x86_64 {' '.join(QEMU_ARGS)}",
         dir=sandbox_dir,
     )
 
-    if os.path.exists(f"{sandbox_dir}/{ROOTFS_BACKUP_NAME}"):
-        run_shell_cmd(f"cp ./{ROOTFS_BACKUP_NAME} ./{ROOTFS_NAME}", dir=sandbox_dir)
-        run_shell_cmd(f"rm ./{ROOTFS_BACKUP_NAME}", dir=sandbox_dir)
-
 
 @cmd.command()
 @click.option("--name", required=True, type=str)
-def remove_sandbox(name):
+def remove(name):
     sandbox_dir = f"{SANDBOX_DIR}/{name}"
 
     if not os.path.exists(sandbox_dir):
@@ -146,14 +187,23 @@ def remove_sandbox(name):
 
 
 @cmd.command()
-def list_sandbox():
+def list():
     for file_name in os.listdir(SANDBOX_DIR):
-        if os.path.isdir(f"{SANDBOX_DIR}/{file_name}"):
-            click.echo(f'"{file_name}"')
+        sandbox_dir = f"{SANDBOX_DIR}/{file_name}"
+        if os.path.isdir(sandbox_dir):
+            spec_path = f"{sandbox_dir}/{SANDBOX_SPEC_NAME}"
+            if not os.path.exists(spec_path):
+                continue
+
+            spec = toml.load(spec_path)
+            name = spec.get("name")
+            kernel_version = spec.get("kernel_version")
+
+            click.echo(f"{name} - kernel version: {kernel_version}")
 
 
 @cmd.command()
-def clean_repos():
+def clean():
     run_shell_cmd(f"rm -rf {REPOS_DIR}")
 
 

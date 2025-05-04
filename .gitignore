@@ -1,2 +1,8 @@
 repos
-sandbox
+sandbox/*
+!sandbox/sample/
+
+sandbox/sample/bzImage
+sandbox/sample/rootfs.img
+sandbox/sample/mnt/*.o
+sandbox/sample/mnt/init
