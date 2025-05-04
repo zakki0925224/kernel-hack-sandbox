@@ -8,3 +8,4 @@ kernel_buildconfig = [
 ]
 
 # force_rebuild = true
+init = "/mnt/init"

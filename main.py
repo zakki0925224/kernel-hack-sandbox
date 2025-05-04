@@ -16,7 +16,6 @@ MNT_DIR_NAME = "mnt"
 QEMU_ARGS = [
     f"-kernel ./{BZIMAGE_NAME}",
     f"-initrd ./{ROOTFS_NAME}",
-    "-append 'rdinit=/bin/sh console=ttyS0'",
     "-serial mon:stdio",
     "-monitor telnet::5678,server,nowait",
     "-gdb tcp::3333",
@@ -110,6 +109,7 @@ def run(name):
     kernel_version = spec.get("kernel_version")
     kernel_buildconfig = spec.get("kernel_buildconfig")
     force_rebuild = spec.get("force_rebuild", False)
+    init = spec.get("init", "/bin/sh")
 
     if not kernel_version:
         click.echo("Kernel version is not specified in the spec", err=True)
@@ -168,8 +168,10 @@ def run(name):
         run_shell_cmd("make -j$(nproc)", dir=linux_dir)
         run_shell_cmd(f"cp {linux_dir}/arch/x86_64/boot/bzImage {sandbox_dir}")
 
+    # run qemu
+    qemu_args = QEMU_ARGS + [f"-append 'rdinit={init} console=ttyS0'"]
     run_shell_cmd(
-        f"qemu-system-x86_64 {' '.join(QEMU_ARGS)}",
+        f"qemu-system-x86_64 {' '.join(qemu_args)}",
         dir=sandbox_dir,
     )
 

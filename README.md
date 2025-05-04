@@ -71,8 +71,8 @@ kernel_buildconfig = [
     "CONFIG_RELOCATABLE=n",
 ]
 
-# Uncomment the following line to force a rebuild of the kernel and root filesystem
 # force_rebuild = true
+init = "/mnt/init"
 ```
 
 ### Explanation of Fields
@@ -81,6 +81,7 @@ kernel_buildconfig = [
 - `kernel_version`: The version of the Linux kernel to use.
 - `kernel_buildconfig`: A list of additional kernel configuration options to apply during the build process.
 - `force_rebuild`: (Optional) Set to `true` to force a rebuild of the kernel and root filesystem, even if they already exist.
+- `init`: (Optional) Specifies the path to the init binary or script that will be executed as the first process (`PID 1`) inside the sandbox. If not set, `/bin/sh` will be used.
 
 ### Important Notes
 
